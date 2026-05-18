@@ -9,8 +9,11 @@ import com.ddlmouse.app.domain.Difficulty
 import com.ddlmouse.app.domain.DifficultyPolicy
 import com.ddlmouse.app.domain.PetLineScene
 import com.ddlmouse.app.domain.PetState
+import com.ddlmouse.app.domain.ReminderPlan
 import com.ddlmouse.app.domain.StoreItem
 import com.ddlmouse.app.domain.TaskFormPolicy
+import com.ddlmouse.app.domain.TaskHistoryGroup
+import com.ddlmouse.app.domain.TaskHistoryPolicy
 import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskSectionPolicy
@@ -32,6 +35,7 @@ import kotlinx.coroutines.launch
 enum class MainTab(val label: String) {
     TASKS("任务"),
     PET("宠物"),
+    HISTORY("历史"),
     MINE("我的")
 }
 
@@ -40,6 +44,8 @@ data class DdlMouseUiState(
     val selectedModule: TaskModule = TaskModule.DAILY,
     val templates: List<TaskTemplate> = emptyList(),
     val occurrences: List<TaskOccurrence> = emptyList(),
+    val reminders: List<ReminderPlan> = emptyList(),
+    val collapsedModules: Set<TaskModule> = emptySet(),
     val petState: PetState = PetState(),
     val storeItems: List<StoreItem> = emptyList(),
     val unshownSummary: DailySummary? = null,
@@ -49,24 +55,30 @@ data class DdlMouseUiState(
     val notificationsEnabled: Boolean = true
 ) {
     val filteredOccurrences: List<TaskOccurrence>
-        get() = occurrences.filter { it.module == selectedModule }
+        get() = activeOccurrences.filter { it.module == selectedModule }
+
+    val activeOccurrences: List<TaskOccurrence>
+        get() = occurrences.filter { it.status != TaskStatus.ARCHIVED }
 
     val sectionSummaries: List<TaskSectionSummary>
-        get() = TaskSectionPolicy.summaries(occurrences)
+        get() = TaskSectionPolicy.summaries(activeOccurrences)
+
+    val historyGroups: List<TaskHistoryGroup>
+        get() = TaskHistoryPolicy.groups(occurrences)
 
     val todayTotal: Int
-        get() = occurrences.count { it.module == TaskModule.DAILY }
+        get() = activeOccurrences.count { it.module == TaskModule.DAILY }
 
     val todayCompleted: Int
-        get() = occurrences.count { it.module == TaskModule.DAILY && it.status == TaskStatus.COMPLETED }
+        get() = activeOccurrences.count { it.module == TaskModule.DAILY && it.status == TaskStatus.COMPLETED }
 
     val pendingPoints: Int
-        get() = occurrences
+        get() = activeOccurrences
             .filter { it.status == TaskStatus.PENDING }
             .sumOf { it.difficulty.points }
 
     val urgentOccurrences: List<TaskOccurrence>
-        get() = occurrences
+        get() = activeOccurrences
             .filter { it.status == TaskStatus.PENDING && it.deadline != null }
             .sortedBy { it.deadline }
             .take(3)
@@ -113,6 +125,11 @@ class DdlMouseViewModel(
             }
         }
         viewModelScope.launch {
+            taskRepository.observeReminders().collect { reminders ->
+                _state.update { it.copy(reminders = reminders) }
+            }
+        }
+        viewModelScope.launch {
             petRepository.observePetState().collect { petState ->
                 _state.update { it.copy(petState = petState) }
             }
@@ -140,6 +157,17 @@ class DdlMouseViewModel(
 
     fun selectModule(module: TaskModule) {
         _state.update { it.copy(selectedModule = module) }
+    }
+
+    fun toggleTaskSection(module: TaskModule) {
+        _state.update { state ->
+            val nextCollapsed = if (module in state.collapsedModules) {
+                state.collapsedModules - module
+            } else {
+                state.collapsedModules + module
+            }
+            state.copy(collapsedModules = nextCollapsed)
+        }
     }
 
     fun showAddTaskDialog() {
@@ -221,6 +249,26 @@ class DdlMouseViewModel(
         }
     }
 
+    fun addReminderToEditingTask(text: String) {
+        val template = state.value.editingTemplate ?: return
+        val triggerAt = parseReminderInput(text, template.deadline) ?: return
+        viewModelScope.launch {
+            taskRepository.addManualReminder(template.id, triggerAt)
+        }
+    }
+
+    fun deleteReminder(reminderId: Long) {
+        viewModelScope.launch {
+            taskRepository.deleteReminder(reminderId)
+        }
+    }
+
+    fun archiveOccurrence(occurrenceId: Long) {
+        viewModelScope.launch {
+            taskRepository.archiveOccurrence(occurrenceId)
+        }
+    }
+
     fun completeOccurrence(occurrenceId: Long) {
         viewModelScope.launch {
             taskRepository.completeOccurrence(occurrenceId, LocalDateTime.now())
@@ -269,6 +317,14 @@ class DdlMouseViewModel(
                 else -> LocalDate.parse(clean).atTime(23, 0)
             }
         }.getOrNull()
+    }
+
+    private fun parseReminderInput(text: String, deadline: LocalDateTime?): LocalDateTime? {
+        val clean = text.trim()
+        if (clean.isEmpty()) return null
+        parseDeadline(clean)?.let { return it }
+        val minuteOfDay = parseMinuteOfDay(clean) ?: return null
+        return deadline?.toLocalDate()?.atTime(minuteOfDay / 60, minuteOfDay % 60)
     }
 
     private fun parseMinuteOfDay(text: String): Int? {

@@ -95,7 +95,7 @@ class TaskRepositoryEditTest {
     }
 }
 
-private class FakeTaskDao : TaskDao {
+internal class FakeTaskDao : TaskDao {
     val templates = mutableMapOf<Long, TaskTemplateEntity>()
     val occurrences = mutableMapOf<Long, TaskOccurrenceEntity>()
     val reminders = mutableMapOf<Long, ReminderPlanEntity>()
@@ -162,10 +162,20 @@ private class FakeTaskDao : TaskDao {
         return id
     }
 
+    override suspend fun reminderById(id: Long): ReminderPlanEntity? = reminders[id]
+
+    override suspend fun remindersForTemplate(templateId: Long): List<ReminderPlanEntity> {
+        return reminders.values.filter { it.templateId == templateId && !it.delivered }.sortedBy { it.triggerAt }
+    }
+
+    override suspend fun deleteReminder(id: Long) {
+        reminders.remove(id)
+    }
+
     override fun observeReminders(): Flow<List<ReminderPlanEntity>> = flowOf(reminders.values.toList())
 }
 
-private class RecordingReminderScheduler : ReminderScheduler {
+internal class RecordingReminderScheduler : ReminderScheduler {
     val scheduledPlans = mutableListOf<ReminderPlan>()
     val cancelledTemplateIds = mutableListOf<Long>()
 
@@ -178,7 +188,7 @@ private class RecordingReminderScheduler : ReminderScheduler {
     }
 }
 
-private class NoopPetRepository : PetRepository {
+internal class NoopPetRepository : PetRepository {
     override fun observePetState(): Flow<PetState> = flowOf(PetState())
     override fun observeStoreItems(): Flow<List<StoreItem>> = flowOf(emptyList())
     override suspend fun ensureSeedData() = Unit
@@ -189,7 +199,7 @@ private class NoopPetRepository : PetRepository {
     override fun randomLine(scene: PetLineScene): String = ""
 }
 
-private class NoopDailySummaryRepository : DailySummaryRepository {
+internal class NoopDailySummaryRepository : DailySummaryRepository {
     override fun observeUnshownSummary(): Flow<DailySummary?> = flowOf(null)
     override suspend fun generateIfNeeded(now: LocalDateTime, occurrences: List<TaskOccurrence>) = Unit
     override suspend fun markShown(summary: DailySummary, shownAt: LocalDateTime) = Unit

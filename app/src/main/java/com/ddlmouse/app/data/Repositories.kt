@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.map
 interface TaskRepository {
     fun observeOccurrences(): Flow<List<TaskOccurrence>>
     fun observeTemplates(): Flow<List<TaskTemplate>>
+    fun observeReminders(): Flow<List<ReminderPlan>>
     suspend fun initializeForOpen(now: LocalDateTime)
     suspend fun createTask(
         title: String,
@@ -66,6 +67,9 @@ interface TaskRepository {
         monthlyDay: Int? = null,
         projectStage: String? = null
     )
+    suspend fun addManualReminder(templateId: Long, triggerAt: LocalDateTime)
+    suspend fun deleteReminder(reminderId: Long)
+    suspend fun archiveOccurrence(occurrenceId: Long)
     suspend fun completeOccurrence(occurrenceId: Long, completedAt: LocalDateTime)
     suspend fun deleteTask(templateId: Long)
 }
@@ -99,6 +103,10 @@ class DefaultTaskRepository(
 
     override fun observeTemplates(): Flow<List<TaskTemplate>> {
         return taskDao.observeTemplates().map { entities -> entities.map { it.toDomain() } }
+    }
+
+    override fun observeReminders(): Flow<List<ReminderPlan>> {
+        return taskDao.observeReminders().map { entities -> entities.map { it.toDomain() } }
     }
 
     override suspend fun initializeForOpen(now: LocalDateTime) {
@@ -192,6 +200,43 @@ class DefaultTaskRepository(
         rebuildReminders(templateId)
     }
 
+    override suspend fun addManualReminder(templateId: Long, triggerAt: LocalDateTime) {
+        val template = taskDao.templateById(templateId)?.toDomain() ?: return
+        val deadline = template.deadline ?: return
+        if (!triggerAt.isBefore(deadline)) return
+        val planId = taskDao.insertReminder(
+            ReminderPlan(
+                templateId = template.id,
+                title = template.title,
+                triggerAt = triggerAt,
+                deadlineAt = deadline,
+                manual = true
+            ).toEntity()
+        )
+        reminderScheduler.schedule(
+            ReminderPlan(
+                id = planId,
+                templateId = template.id,
+                title = template.title,
+                triggerAt = triggerAt,
+                deadlineAt = deadline,
+                manual = true
+            )
+        )
+    }
+
+    override suspend fun deleteReminder(reminderId: Long) {
+        val reminder = taskDao.reminderById(reminderId)?.toDomain() ?: return
+        taskDao.deleteReminder(reminderId)
+        rescheduleRemindersForTemplate(reminder.templateId)
+    }
+
+    override suspend fun archiveOccurrence(occurrenceId: Long) {
+        val occurrence = taskDao.occurrenceById(occurrenceId)?.toDomain() ?: return
+        if (occurrence.status == TaskStatus.PENDING) return
+        taskDao.updateOccurrence(occurrence.copy(status = TaskStatus.ARCHIVED).toEntity())
+    }
+
     override suspend fun completeOccurrence(occurrenceId: Long, completedAt: LocalDateTime) {
         val occurrence = taskDao.occurrenceById(occurrenceId)?.toDomain() ?: return
         if (occurrence.status != TaskStatus.PENDING) return
@@ -218,7 +263,7 @@ class DefaultTaskRepository(
     }
 
     private suspend fun createOccurrenceIfMissing(template: TaskTemplate, now: LocalDateTime) {
-        val periodKey = SchedulePolicy.periodKey(template.module, now, template.id)
+        val periodKey = SchedulePolicy.occurrencePeriodKey(template, now) ?: return
         if (taskDao.occurrenceForTemplateAndPeriod(template.id, periodKey) != null) return
         taskDao.insertOccurrence(
             TaskOccurrence(
@@ -293,6 +338,13 @@ class DefaultTaskRepository(
             )
             reminderScheduler.schedule(plan)
         }
+    }
+
+    private suspend fun rescheduleRemindersForTemplate(templateId: Long) {
+        reminderScheduler.cancelForTemplate(templateId)
+        taskDao.remindersForTemplate(templateId)
+            .map { it.toDomain() }
+            .forEach { reminderScheduler.schedule(it) }
     }
 }
 

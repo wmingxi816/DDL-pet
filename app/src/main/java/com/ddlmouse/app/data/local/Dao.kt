@@ -54,6 +54,15 @@ interface TaskDao {
     @Insert
     suspend fun insertReminder(entity: ReminderPlanEntity): Long
 
+    @Query("SELECT * FROM reminder_plans WHERE id = :id LIMIT 1")
+    suspend fun reminderById(id: Long): ReminderPlanEntity?
+
+    @Query("SELECT * FROM reminder_plans WHERE templateId = :templateId AND delivered = 0 ORDER BY triggerAt ASC")
+    suspend fun remindersForTemplate(templateId: Long): List<ReminderPlanEntity>
+
+    @Query("DELETE FROM reminder_plans WHERE id = :id")
+    suspend fun deleteReminder(id: Long)
+
     @Query("SELECT * FROM reminder_plans WHERE delivered = 0 ORDER BY triggerAt ASC")
     fun observeReminders(): Flow<List<ReminderPlanEntity>>
 }

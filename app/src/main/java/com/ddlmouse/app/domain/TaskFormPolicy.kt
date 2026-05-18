@@ -82,3 +82,16 @@ object TaskEditPolicy {
         )
     }
 }
+
+object TaskHistoryPolicy {
+    fun groups(occurrences: List<TaskOccurrence>): List<TaskHistoryGroup> {
+        return listOf(TaskStatus.COMPLETED, TaskStatus.MISSED, TaskStatus.ARCHIVED).map { status ->
+            TaskHistoryGroup(
+                status = status,
+                occurrences = occurrences
+                    .filter { it.status == status }
+                    .sortedWith(compareByDescending<TaskOccurrence> { it.completedAt }.thenByDescending { it.id })
+            )
+        }
+    }
+}

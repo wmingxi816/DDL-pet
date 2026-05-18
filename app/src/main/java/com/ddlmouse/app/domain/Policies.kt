@@ -32,6 +32,35 @@ object SchedulePolicy {
             TaskModule.TODO -> "single-$templateId"
         }
     }
+
+    fun occurrencePeriodKey(template: TaskTemplate, now: LocalDateTime): String? {
+        val date = businessDate(now)
+        return when (template.module) {
+            TaskModule.WEEKLY -> {
+                if (template.weeklyDays.isEmpty()) {
+                    periodKey(template.module, now, template.id)
+                } else {
+                    val dayOfWeek = date.dayOfWeek.value
+                    if (dayOfWeek in template.weeklyDays) {
+                        "${periodKey(template.module, now, template.id)}-D$dayOfWeek"
+                    } else {
+                        null
+                    }
+                }
+            }
+            TaskModule.MONTHLY -> {
+                val selectedDay = template.monthlyDay
+                if (selectedDay == null) {
+                    periodKey(template.module, now, template.id)
+                } else if (date.dayOfMonth == selectedDay) {
+                    "${periodKey(template.module, now, template.id)}-D$selectedDay"
+                } else {
+                    null
+                }
+            }
+            else -> periodKey(template.module, now, template.id)
+        }
+    }
 }
 
 object DifficultyPolicy {

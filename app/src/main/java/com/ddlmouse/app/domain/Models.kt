@@ -21,7 +21,8 @@ enum class Difficulty(val label: String, val points: Int) {
 enum class TaskStatus {
     PENDING,
     COMPLETED,
-    MISSED
+    MISSED,
+    ARCHIVED
 }
 
 enum class RepeatMode(val label: String) {
@@ -150,4 +151,9 @@ data class TaskEditDraft(
     val weeklyDays: Set<Int> = emptySet(),
     val monthlyDay: Int? = null,
     val projectStage: String? = null
+)
+
+data class TaskHistoryGroup(
+    val status: TaskStatus,
+    val occurrences: List<TaskOccurrence>
 )

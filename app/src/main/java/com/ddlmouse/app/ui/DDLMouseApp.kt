@@ -22,8 +22,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Pets
@@ -67,10 +72,12 @@ import com.ddlmouse.app.domain.Difficulty
 import com.ddlmouse.app.domain.DifficultyPolicy
 import com.ddlmouse.app.domain.PetState
 import com.ddlmouse.app.domain.ReminderPolicy
+import com.ddlmouse.app.domain.ReminderPlan
 import com.ddlmouse.app.domain.StoreCategory
 import com.ddlmouse.app.domain.StoreItem
 import com.ddlmouse.app.domain.TaskFormField
 import com.ddlmouse.app.domain.TaskFormPolicy
+import com.ddlmouse.app.domain.TaskHistoryGroup
 import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskSectionSummary
@@ -116,6 +123,7 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
             when (state.selectedTab) {
                 MainTab.TASKS -> TaskScreen(
                     state = state,
+                    onToggleSection = viewModel::toggleTaskSection,
                     onEdit = viewModel::showEditTaskDialog,
                     onComplete = viewModel::completeOccurrence
                 )
@@ -124,6 +132,10 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
                     onFeed = viewModel::feedPet,
                     onInteract = viewModel::interactWithPet,
                     onBuy = viewModel::buyItem
+                )
+                MainTab.HISTORY -> HistoryScreen(
+                    state = state,
+                    onArchive = viewModel::archiveOccurrence
                 )
                 MainTab.MINE -> MineScreen(
                     state = state,
@@ -143,8 +155,11 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
     state.editingTemplate?.let { template ->
         EditTaskDialog(
             template = template,
+            reminders = state.reminders.filter { it.templateId == template.id },
             onDismiss = viewModel::hideEditTaskDialog,
-            onSave = viewModel::updateTask
+            onSave = viewModel::updateTask,
+            onAddReminder = viewModel::addReminderToEditingTask,
+            onDeleteReminder = viewModel::deleteReminder
         )
     }
 }
@@ -166,12 +181,14 @@ private fun BottomNavigation(selectedTab: MainTab, onTabSelected: (MainTab) -> U
 private fun MainTab.icon(): ImageVector = when (this) {
     MainTab.TASKS -> Icons.AutoMirrored.Filled.Assignment
     MainTab.PET -> Icons.Default.Pets
+    MainTab.HISTORY -> Icons.Default.History
     MainTab.MINE -> Icons.Default.Person
 }
 
 @Composable
 private fun TaskScreen(
     state: DdlMouseUiState,
+    onToggleSection: (TaskModule) -> Unit,
     onEdit: (Long) -> Unit,
     onComplete: (Long) -> Unit
 ) {
@@ -194,7 +211,10 @@ private fun TaskScreen(
         items(state.sectionSummaries, key = { it.module.name }) { summary ->
             TaskModuleSection(
                 summary = summary,
-                occurrences = state.occurrences.filter { it.module == summary.module },
+                occurrences = state.activeOccurrences.filter { it.module == summary.module },
+                templates = state.templates.associateBy { it.id },
+                collapsed = summary.module in state.collapsedModules,
+                onToggle = { onToggleSection(summary.module) },
                 onEdit = onEdit,
                 onComplete = onComplete
             )
@@ -218,7 +238,7 @@ private fun TaskOverviewPanel(state: DdlMouseUiState) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             OverviewMetric(label = "今日", value = "${state.todayCompleted}/${state.todayTotal}")
-            OverviewMetric(label = "待完成", value = "${state.occurrences.count { it.status == TaskStatus.PENDING }}")
+            OverviewMetric(label = "待完成", value = "${state.activeOccurrences.count { it.status == TaskStatus.PENDING }}")
             OverviewMetric(label = "可得积分", value = "+${state.pendingPoints}")
         }
     }
@@ -302,6 +322,9 @@ private fun ModuleChips(selected: TaskModule, onSelected: (TaskModule) -> Unit) 
 private fun TaskModuleSection(
     summary: TaskSectionSummary,
     occurrences: List<TaskOccurrence>,
+    templates: Map<Long, TaskTemplate>,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
     onEdit: (Long) -> Unit,
     onComplete: (Long) -> Unit
 ) {
@@ -340,8 +363,20 @@ private fun TaskModuleSection(
                         color = MaterialTheme.colorScheme.error
                     )
                 }
+                IconButton(onClick = onToggle) {
+                    Icon(
+                        imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                        contentDescription = if (collapsed) "展开" else "折叠"
+                    )
+                }
             }
-            if (occurrences.isEmpty()) {
+            if (collapsed) {
+                Text(
+                    "已折叠，${summary.pendingCount} 个待完成",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (occurrences.isEmpty()) {
                 Text(
                     "这一栏还没有任务",
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
@@ -354,6 +389,7 @@ private fun TaskModuleSection(
                     }
                     TaskListRow(
                         occurrence = occurrence,
+                        template = templates[occurrence.templateId],
                         onEdit = { onEdit(occurrence.templateId) },
                         onComplete = { onComplete(occurrence.id) }
                     )
@@ -364,7 +400,12 @@ private fun TaskModuleSection(
 }
 
 @Composable
-private fun TaskListRow(occurrence: TaskOccurrence, onEdit: () -> Unit, onComplete: () -> Unit) {
+private fun TaskListRow(
+    occurrence: TaskOccurrence,
+    template: TaskTemplate?,
+    onEdit: () -> Unit,
+    onComplete: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -392,6 +433,9 @@ private fun TaskListRow(occurrence: TaskOccurrence, onEdit: () -> Unit, onComple
                 text = listOfNotNull(
                     occurrence.deadline?.let { "DDL ${it.format(deadlineFormatter)}" },
                     "${occurrence.difficulty.label} +${occurrence.difficulty.points}",
+                    template?.projectStage?.let { "阶段 $it" },
+                    template?.note?.takeIf { it.isNotBlank() },
+                    template?.timeBucket?.let { "时段 $it" },
                     statusLabel(occurrence.status)
                 ).joinToString("  ·  "),
                 style = MaterialTheme.typography.bodySmall,
@@ -417,6 +461,7 @@ private fun statusLabel(status: TaskStatus): String = when (status) {
     TaskStatus.PENDING -> "进行中"
     TaskStatus.COMPLETED -> "已完成"
     TaskStatus.MISSED -> "未完成"
+    TaskStatus.ARCHIVED -> "已归档"
 }
 
 @Composable
@@ -424,6 +469,7 @@ private fun statusColor(status: TaskStatus): Color = when (status) {
     TaskStatus.PENDING -> MaterialTheme.colorScheme.primary
     TaskStatus.COMPLETED -> Color(0xFF2E7D32)
     TaskStatus.MISSED -> MaterialTheme.colorScheme.error
+    TaskStatus.ARCHIVED -> MaterialTheme.colorScheme.outline
 }
 
 @Composable
@@ -585,6 +631,113 @@ private fun StoreItemRow(item: StoreItem, petPoints: Int, onBuy: () -> Unit) {
 }
 
 @Composable
+private fun HistoryScreen(state: DdlMouseUiState, onArchive: (Long) -> Unit) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(12.dp))
+            Header("历史", "完成、逾期和归档记录集中放在这里。")
+        }
+        items(state.historyGroups, key = { it.status.name }) { group ->
+            HistoryGroupSection(group = group, onArchive = onArchive)
+        }
+        item { Spacer(modifier = Modifier.height(88.dp)) }
+    }
+}
+
+@Composable
+private fun HistoryGroupSection(group: TaskHistoryGroup, onArchive: (Long) -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = 1.dp
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(statusLabel(group.status), fontWeight = FontWeight.Bold)
+                Text(
+                    "${group.occurrences.size} 条",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (group.occurrences.isEmpty()) {
+                Text(
+                    "暂无记录",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                group.occurrences.forEachIndexed { index, occurrence ->
+                    if (index > 0) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    }
+                    HistoryRow(occurrence = occurrence, onArchive = onArchive)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryRow(occurrence: TaskOccurrence, onArchive: (Long) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(statusColor(occurrence.status))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                occurrence.title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                listOfNotNull(
+                    occurrence.module.label,
+                    occurrence.deadline?.let { "DDL ${it.format(deadlineFormatter)}" },
+                    occurrence.completedAt?.let { "完成 ${it.format(deadlineFormatter)}" },
+                    "${occurrence.difficulty.label} ${occurrence.difficulty.points}分"
+                ).joinToString("  ·  "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (occurrence.status != TaskStatus.ARCHIVED) {
+            IconButton(onClick = { onArchive(occurrence.id) }) {
+                Icon(Icons.Default.Archive, contentDescription = "归档")
+            }
+        }
+    }
+}
+
+@Composable
 private fun MineScreen(
     state: DdlMouseUiState,
     onNotificationsChanged: (Boolean) -> Unit
@@ -658,16 +811,22 @@ private fun AddTaskDialog(
 @Composable
 private fun EditTaskDialog(
     template: TaskTemplate,
+    reminders: List<ReminderPlan>,
     onDismiss: () -> Unit,
-    onSave: (TaskFormInput) -> Unit
+    onSave: (TaskFormInput) -> Unit,
+    onAddReminder: (String) -> Unit,
+    onDeleteReminder: (Long) -> Unit
 ) {
     TaskFormDialog(
         dialogTitle = "编辑任务",
         confirmText = "保存",
         initialModule = template.module,
         initialTemplate = template,
+        reminders = reminders,
         onDismiss = onDismiss,
-        onSubmit = onSave
+        onSubmit = onSave,
+        onAddReminder = onAddReminder,
+        onDeleteReminder = onDeleteReminder
     )
 }
 
@@ -678,8 +837,11 @@ private fun TaskFormDialog(
     confirmText: String,
     initialModule: TaskModule,
     initialTemplate: TaskTemplate?,
+    reminders: List<ReminderPlan> = emptyList(),
     onDismiss: () -> Unit,
-    onSubmit: (TaskFormInput) -> Unit
+    onSubmit: (TaskFormInput) -> Unit,
+    onAddReminder: (String) -> Unit = {},
+    onDeleteReminder: (Long) -> Unit = {}
 ) {
     val formKey = initialTemplate?.id ?: initialModule.name
     var title by remember(formKey) { mutableStateOf(initialTemplate?.title.orEmpty()) }
@@ -697,6 +859,7 @@ private fun TaskFormDialog(
     }
     var monthlyDay by remember(formKey) { mutableStateOf(initialTemplate?.monthlyDay?.toString().orEmpty()) }
     var projectStage by remember(formKey) { mutableStateOf(initialTemplate?.projectStage.orEmpty()) }
+    var newReminder by remember(formKey) { mutableStateOf("") }
     val fields = TaskFormPolicy.fieldsFor(module)
     val parsedDeadline = parseDeadlinePreview(deadline)
     val recommendedDifficulty = DifficultyPolicy.recommend(module, parsedDeadline, LocalDateTime.now())
@@ -834,6 +997,18 @@ private fun TaskFormDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (initialTemplate != null) {
+                    ReminderEditor(
+                        reminders = reminders,
+                        newReminder = newReminder,
+                        onNewReminderChanged = { newReminder = it },
+                        onAddReminder = {
+                            onAddReminder(newReminder)
+                            newReminder = ""
+                        },
+                        onDeleteReminder = onDeleteReminder
+                    )
+                }
             }
         },
         confirmButton = {
@@ -866,6 +1041,55 @@ private fun TaskFormDialog(
             }
         }
     )
+}
+
+@Composable
+private fun ReminderEditor(
+    reminders: List<ReminderPlan>,
+    newReminder: String,
+    onNewReminderChanged: (String) -> Unit,
+    onAddReminder: () -> Unit,
+    onDeleteReminder: (Long) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("提醒点", fontWeight = FontWeight.SemiBold)
+        if (reminders.isEmpty()) {
+            Text("还没有单独提醒点。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            reminders.forEach { reminder ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        reminder.triggerAt.format(deadlineFormatter),
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IconButton(onClick = { onDeleteReminder(reminder.id) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "删除提醒")
+                    }
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                modifier = Modifier.weight(1f),
+                value = newReminder,
+                onValueChange = onNewReminderChanged,
+                label = { Text("新增提醒") },
+                placeholder = { Text("09:00 或 2026-05-20T09:00") },
+                singleLine = true
+            )
+            Button(onClick = onAddReminder, enabled = newReminder.isNotBlank()) {
+                Text("添加")
+            }
+        }
+    }
 }
 
 private val formInputFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")

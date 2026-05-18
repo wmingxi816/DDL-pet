@@ -14,7 +14,11 @@ class AndroidReminderScheduler(private val context: Context) : ReminderScheduler
     override fun schedule(plan: ReminderPlan) {
         val triggerAtMillis = TimeMapper.requireEpochMillis(plan.triggerAt)
         if (triggerAtMillis <= System.currentTimeMillis()) return
-        val pendingIntent = pendingIntent(plan.id.toInt(), plan.templateId, plan.title)
+        val pendingIntent = pendingIntent(
+            ReminderRequestCodePolicy.forPlan(plan.templateId, plan.id),
+            plan.templateId,
+            plan.title
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
             alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
         } else {
@@ -23,8 +27,7 @@ class AndroidReminderScheduler(private val context: Context) : ReminderScheduler
     }
 
     override fun cancelForTemplate(templateId: Long) {
-        for (offset in 0..24) {
-            val requestCode = (templateId * 31 + offset).toInt()
+        ReminderRequestCodePolicy.cancelCodesForTemplate(templateId).forEach { requestCode ->
             alarmManager.cancel(pendingIntent(requestCode, templateId, ""))
         }
     }
@@ -42,4 +45,3 @@ class AndroidReminderScheduler(private val context: Context) : ReminderScheduler
         )
     }
 }
-
