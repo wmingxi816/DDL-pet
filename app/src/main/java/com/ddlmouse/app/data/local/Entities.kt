@@ -11,7 +11,15 @@ data class TaskTemplateEntity(
     val deadlineAt: Long?,
     val difficulty: String,
     val enabled: Boolean = true,
-    val reminderOverrideAt: Long? = null
+    val reminderOverrideAt: Long? = null,
+    val note: String = "",
+    val repeatMode: String = "NONE",
+    val reminderEnabled: Boolean = true,
+    val preferredReminderMinuteOfDay: Int? = null,
+    val timeBucket: String? = null,
+    val weeklyDays: String = "",
+    val monthlyDay: Int? = null,
+    val projectStage: String? = null
 )
 
 @Entity(tableName = "task_occurrences")
@@ -73,4 +81,3 @@ data class DailySummaryEntity(
     val petLine: String,
     val shownAt: Long?
 )
-

@@ -12,6 +12,7 @@ import com.ddlmouse.app.domain.PetLines
 import com.ddlmouse.app.domain.PetState
 import com.ddlmouse.app.domain.ReminderPlan
 import com.ddlmouse.app.domain.ReminderPolicy
+import com.ddlmouse.app.domain.RepeatMode
 import com.ddlmouse.app.domain.SchedulePolicy
 import com.ddlmouse.app.domain.ScorePolicy
 import com.ddlmouse.app.domain.StoreCategory
@@ -21,6 +22,7 @@ import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskStatus
 import com.ddlmouse.app.domain.TaskTemplate
+import com.ddlmouse.app.domain.TaskFormPolicy
 import com.ddlmouse.app.reminder.ReminderScheduler
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -36,7 +38,15 @@ interface TaskRepository {
         module: TaskModule,
         deadline: LocalDateTime?,
         difficulty: Difficulty?,
-        reminderOverride: LocalDateTime?
+        reminderOverride: LocalDateTime?,
+        note: String = "",
+        repeatMode: RepeatMode = TaskFormPolicy.repeatModeFor(module),
+        reminderEnabled: Boolean = true,
+        preferredReminderMinuteOfDay: Int? = null,
+        timeBucket: String? = null,
+        weeklyDays: Set<Int> = emptySet(),
+        monthlyDay: Int? = null,
+        projectStage: String? = null
     )
     suspend fun completeOccurrence(occurrenceId: Long, completedAt: LocalDateTime)
     suspend fun deleteTask(templateId: Long)
@@ -85,7 +95,15 @@ class DefaultTaskRepository(
         module: TaskModule,
         deadline: LocalDateTime?,
         difficulty: Difficulty?,
-        reminderOverride: LocalDateTime?
+        reminderOverride: LocalDateTime?,
+        note: String,
+        repeatMode: RepeatMode,
+        reminderEnabled: Boolean,
+        preferredReminderMinuteOfDay: Int?,
+        timeBucket: String?,
+        weeklyDays: Set<Int>,
+        monthlyDay: Int?,
+        projectStage: String?
     ) {
         val cleanTitle = title.trim()
         if (cleanTitle.isEmpty()) return
@@ -96,7 +114,15 @@ class DefaultTaskRepository(
                 module = module,
                 deadline = deadline,
                 difficulty = finalDifficulty,
-                reminderOverride = reminderOverride
+                reminderOverride = reminderOverride,
+                note = note.trim(),
+                repeatMode = repeatMode,
+                reminderEnabled = reminderEnabled,
+                preferredReminderMinuteOfDay = preferredReminderMinuteOfDay,
+                timeBucket = timeBucket?.trim()?.takeIf { it.isNotEmpty() },
+                weeklyDays = weeklyDays,
+                monthlyDay = monthlyDay,
+                projectStage = projectStage?.trim()?.takeIf { it.isNotEmpty() }
             ).toEntity()
         )
         createOccurrenceIfMissing(
@@ -168,6 +194,7 @@ class DefaultTaskRepository(
         val template = taskDao.templateById(templateId)?.toDomain() ?: return
         taskDao.deleteRemindersForTemplate(templateId)
         reminderScheduler.cancelForTemplate(templateId)
+        if (!template.reminderEnabled) return
         val deadline = template.deadline ?: return
         val reminderTimes = template.reminderOverride?.let { listOf(it) }
             ?: ReminderPolicy.defaultReminderTimes(LocalDateTime.now(), deadline)
@@ -312,4 +339,3 @@ class DefaultDailySummaryRepository(
         summaryDao.markShown(summary.businessDate.toString(), TimeMapper.requireEpochMillis(shownAt))
     }
 }
-

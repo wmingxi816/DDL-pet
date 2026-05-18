@@ -10,6 +10,7 @@ import com.ddlmouse.app.domain.DailySummary
 import com.ddlmouse.app.domain.Difficulty
 import com.ddlmouse.app.domain.PetState
 import com.ddlmouse.app.domain.ReminderPlan
+import com.ddlmouse.app.domain.RepeatMode
 import com.ddlmouse.app.domain.StoreCategory
 import com.ddlmouse.app.domain.StoreItem
 import com.ddlmouse.app.domain.TaskModule
@@ -27,7 +28,15 @@ fun TaskTemplateEntity.toDomain(): TaskTemplate = TaskTemplate(
     deadline = TimeMapper.fromEpochMillis(deadlineAt),
     difficulty = Difficulty.valueOf(difficulty),
     enabled = enabled,
-    reminderOverride = TimeMapper.fromEpochMillis(reminderOverrideAt)
+    reminderOverride = TimeMapper.fromEpochMillis(reminderOverrideAt),
+    note = note,
+    repeatMode = RepeatMode.valueOf(repeatMode),
+    reminderEnabled = reminderEnabled,
+    preferredReminderMinuteOfDay = preferredReminderMinuteOfDay,
+    timeBucket = timeBucket,
+    weeklyDays = splitIntSet(weeklyDays),
+    monthlyDay = monthlyDay,
+    projectStage = projectStage
 )
 
 fun TaskTemplate.toEntity(): TaskTemplateEntity = TaskTemplateEntity(
@@ -37,7 +46,15 @@ fun TaskTemplate.toEntity(): TaskTemplateEntity = TaskTemplateEntity(
     deadlineAt = TimeMapper.toEpochMillis(deadline),
     difficulty = difficulty.name,
     enabled = enabled,
-    reminderOverrideAt = TimeMapper.toEpochMillis(reminderOverride)
+    reminderOverrideAt = TimeMapper.toEpochMillis(reminderOverride),
+    note = note,
+    repeatMode = repeatMode.name,
+    reminderEnabled = reminderEnabled,
+    preferredReminderMinuteOfDay = preferredReminderMinuteOfDay,
+    timeBucket = timeBucket,
+    weeklyDays = joinIntSet(weeklyDays),
+    monthlyDay = monthlyDay,
+    projectStage = projectStage
 )
 
 fun TaskOccurrenceEntity.toDomain(): TaskOccurrence = TaskOccurrence(
@@ -152,3 +169,12 @@ private fun splitList(value: String): List<String> {
     return value.split(LIST_SEPARATOR).filter { it.isNotBlank() }
 }
 
+private fun splitIntSet(value: String): Set<Int> {
+    return value.split(LIST_SEPARATOR)
+        .mapNotNull { it.toIntOrNull() }
+        .toSet()
+}
+
+private fun joinIntSet(value: Set<Int>): String {
+    return value.sorted().joinToString(LIST_SEPARATOR)
+}

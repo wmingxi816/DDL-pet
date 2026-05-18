@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
@@ -27,12 +29,12 @@ import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -61,12 +63,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ddlmouse.app.domain.DailySummary
 import com.ddlmouse.app.domain.Difficulty
+import com.ddlmouse.app.domain.DifficultyPolicy
 import com.ddlmouse.app.domain.PetState
+import com.ddlmouse.app.domain.ReminderPolicy
 import com.ddlmouse.app.domain.StoreCategory
 import com.ddlmouse.app.domain.StoreItem
+import com.ddlmouse.app.domain.TaskFormField
+import com.ddlmouse.app.domain.TaskFormPolicy
 import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
+import com.ddlmouse.app.domain.TaskSectionSummary
 import com.ddlmouse.app.domain.TaskStatus
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -106,7 +114,6 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
             when (state.selectedTab) {
                 MainTab.TASKS -> TaskScreen(
                     state = state,
-                    onModuleSelected = viewModel::selectModule,
                     onComplete = viewModel::completeOccurrence
                 )
                 MainTab.PET -> PetScreen(
@@ -155,34 +162,61 @@ private fun MainTab.icon(): ImageVector = when (this) {
 @Composable
 private fun TaskScreen(
     state: DdlMouseUiState,
-    onModuleSelected: (TaskModule) -> Unit,
     onComplete: (Long) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
             Spacer(modifier = Modifier.height(12.dp))
             Header("任务", "今天先拆最小的一步，积分会喂饱鼠鼠。")
         }
         item {
-            UrgentPanel(state.urgentOccurrences)
+            TaskOverviewPanel(state)
         }
         item {
-            ModuleChips(
-                selected = state.selectedModule,
-                onSelected = onModuleSelected
-            )
+            UrgentPanel(state.urgentOccurrences)
         }
-        items(state.filteredOccurrences, key = { it.id }) { occurrence ->
-            TaskCard(occurrence = occurrence, onComplete = { onComplete(occurrence.id) })
+        items(state.sectionSummaries, key = { it.module.name }) { summary ->
+            TaskModuleSection(
+                summary = summary,
+                occurrences = state.occurrences.filter { it.module == summary.module },
+                onComplete = onComplete
+            )
         }
         item {
             Spacer(modifier = Modifier.height(88.dp))
         }
+    }
+}
+
+@Composable
+private fun TaskOverviewPanel(state: DdlMouseUiState) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OverviewMetric(label = "今日", value = "${state.todayCompleted}/${state.todayTotal}")
+            OverviewMetric(label = "待完成", value = "${state.occurrences.count { it.status == TaskStatus.PENDING }}")
+            OverviewMetric(label = "可得积分", value = "+${state.pendingPoints}")
+        }
+    }
+}
+
+@Composable
+private fun OverviewMetric(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -204,9 +238,14 @@ private fun Header(title: String, subtitle: String) {
 
 @Composable
 private fun UrgentPanel(urgent: List<TaskOccurrence>) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = 1.dp
+    ) {
         Column(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -248,34 +287,62 @@ private fun ModuleChips(selected: TaskModule, onSelected: (TaskModule) -> Unit) 
 }
 
 @Composable
-private fun TaskCard(occurrence: TaskOccurrence, onComplete: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+private fun TaskModuleSection(
+    summary: TaskSectionSummary,
+    occurrences: List<TaskOccurrence>,
+    onComplete: (Long) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = 1.dp
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(occurrence.title, fontWeight = FontWeight.SemiBold)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(summary.module.label, fontWeight = FontWeight.Bold)
+                    Text(
+                        "完成 ${summary.completedCount}/${summary.totalCount} · 待完成 ${summary.pendingCount} · 可得 +${summary.pendingPoints}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (summary.missedCount > 0) {
+                    Text(
+                        "逾期 ${summary.missedCount}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            if (occurrences.isEmpty()) {
                 Text(
-                    text = listOfNotNull(
-                        occurrence.module.label,
-                        occurrence.deadline?.let { "DDL ${it.format(deadlineFormatter)}" },
-                        "${occurrence.difficulty.label} +${occurrence.difficulty.points}"
-                    ).joinToString("  ·  "),
-                    style = MaterialTheme.typography.bodySmall,
+                    "这一栏还没有任务",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                StatusChip(occurrence.status)
-            }
-            if (occurrence.status == TaskStatus.PENDING) {
-                IconButton(onClick = onComplete) {
-                    Icon(Icons.Default.Check, contentDescription = "完成")
+            } else {
+                occurrences.forEachIndexed { index, occurrence ->
+                    if (index > 0) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    }
+                    TaskListRow(
+                        occurrence = occurrence,
+                        onComplete = { onComplete(occurrence.id) }
+                    )
                 }
             }
         }
@@ -283,13 +350,61 @@ private fun TaskCard(occurrence: TaskOccurrence, onComplete: () -> Unit) {
 }
 
 @Composable
-private fun StatusChip(status: TaskStatus) {
-    val label = when (status) {
-        TaskStatus.PENDING -> "进行中"
-        TaskStatus.COMPLETED -> "已完成"
-        TaskStatus.MISSED -> "未完成"
+private fun TaskListRow(occurrence: TaskOccurrence, onComplete: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(statusColor(occurrence.status))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                occurrence.title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = listOfNotNull(
+                    occurrence.deadline?.let { "DDL ${it.format(deadlineFormatter)}" },
+                    "${occurrence.difficulty.label} +${occurrence.difficulty.points}",
+                    statusLabel(occurrence.status)
+                ).joinToString("  ·  "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (occurrence.status == TaskStatus.PENDING) {
+            IconButton(onClick = onComplete) {
+                Icon(Icons.Default.Check, contentDescription = "完成")
+            }
+        }
     }
-    AssistChip(onClick = {}, label = { Text(label) })
+}
+
+private fun statusLabel(status: TaskStatus): String = when (status) {
+    TaskStatus.PENDING -> "进行中"
+    TaskStatus.COMPLETED -> "已完成"
+    TaskStatus.MISSED -> "未完成"
+}
+
+@Composable
+private fun statusColor(status: TaskStatus): Color = when (status) {
+    TaskStatus.PENDING -> MaterialTheme.colorScheme.primary
+    TaskStatus.COMPLETED -> Color(0xFF2E7D32)
+    TaskStatus.MISSED -> MaterialTheme.colorScheme.error
 }
 
 @Composable
@@ -508,29 +623,36 @@ private fun MineScreen(
 private fun AddTaskDialog(
     initialModule: TaskModule,
     onDismiss: () -> Unit,
-    onCreate: (String, TaskModule, String, Difficulty?) -> Unit
+    onCreate: (TaskFormInput) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
     var module by remember { mutableStateOf(initialModule) }
     var deadline by remember { mutableStateOf("") }
     var difficulty by remember { mutableStateOf<Difficulty?>(null) }
+    var note by remember { mutableStateOf("") }
+    var reminderEnabled by remember { mutableStateOf(true) }
+    var reminderTime by remember { mutableStateOf("") }
+    var timeBucket by remember { mutableStateOf("") }
+    var weeklyDays by remember { mutableStateOf("") }
+    var monthlyDay by remember { mutableStateOf("") }
+    var projectStage by remember { mutableStateOf("") }
+    val fields = TaskFormPolicy.fieldsFor(module)
+    val parsedDeadline = parseDeadlinePreview(deadline)
+    val recommendedDifficulty = DifficultyPolicy.recommend(module, parsedDeadline, LocalDateTime.now())
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("新增任务") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
                     value = title,
                     onValueChange = { title = it },
                     label = { Text("任务名称") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = deadline,
-                    onValueChange = { deadline = it },
-                    label = { Text("DDL 日期，可空") },
-                    placeholder = { Text("2026-05-20 或 2026-05-20T21:00") },
                     singleLine = true
                 )
                 ModuleChips(selected = module, onSelected = { module = it })
@@ -540,17 +662,138 @@ private fun AddTaskDialog(
                 ) {
                     Difficulty.entries.forEach { option ->
                         FilterChip(
-                            selected = difficulty == option,
+                            selected = (difficulty ?: recommendedDifficulty) == option,
                             onClick = { difficulty = option },
                             label = { Text("${option.label} +${option.points}") }
                         )
                     }
                 }
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(TaskFormField.NOTE.label) },
+                    minLines = 2,
+                    maxLines = 3
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(TaskFormField.REMINDER_ENABLED.label, fontWeight = FontWeight.SemiBold)
+                    Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
+                }
+                if (fields.contains(TaskFormField.TIME_BUCKET)) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = timeBucket,
+                        onValueChange = { timeBucket = it },
+                        label = { Text(TaskFormField.TIME_BUCKET.label) },
+                        placeholder = { Text("早 / 中 / 晚 / 睡前") },
+                        singleLine = true
+                    )
+                }
+                if (fields.contains(TaskFormField.WEEKLY_DAYS)) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = weeklyDays,
+                        onValueChange = { weeklyDays = it },
+                        label = { Text(TaskFormField.WEEKLY_DAYS.label) },
+                        placeholder = { Text("1,3,5 或 一三五") },
+                        singleLine = true
+                    )
+                }
+                if (fields.contains(TaskFormField.MONTHLY_DAY)) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = monthlyDay,
+                        onValueChange = { monthlyDay = it },
+                        label = { Text(TaskFormField.MONTHLY_DAY.label) },
+                        placeholder = { Text("1-31") },
+                        singleLine = true
+                    )
+                }
+                if (fields.contains(TaskFormField.DEADLINE_OPTIONAL) ||
+                    fields.contains(TaskFormField.DEADLINE_REQUIRED) ||
+                    fields.contains(TaskFormField.WEEKLY_DEADLINE_TIME) ||
+                    fields.contains(TaskFormField.MONTHLY_DEADLINE_TIME)
+                ) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = deadline,
+                        onValueChange = { deadline = it },
+                        label = {
+                            Text(
+                                if (fields.contains(TaskFormField.DEADLINE_REQUIRED)) {
+                                    TaskFormField.DEADLINE_REQUIRED.label
+                                } else {
+                                    "本期 DDL，可空"
+                                }
+                            )
+                        },
+                        placeholder = { Text("2026-05-20 或 2026-05-20T21:00") },
+                        singleLine = true
+                    )
+                }
+                if (fields.contains(TaskFormField.PROJECT_STAGE)) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = projectStage,
+                        onValueChange = { projectStage = it },
+                        label = { Text(TaskFormField.PROJECT_STAGE.label) },
+                        placeholder = { Text("资料 / 初稿 / 修改 / 提交") },
+                        singleLine = true
+                    )
+                }
+                if (reminderEnabled &&
+                    (fields.contains(TaskFormField.DAILY_REMINDER_TIME) || fields.contains(TaskFormField.REMINDER_PREVIEW))
+                ) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = reminderTime,
+                        onValueChange = { reminderTime = it },
+                        label = {
+                            Text(
+                                if (fields.contains(TaskFormField.DAILY_REMINDER_TIME)) {
+                                    TaskFormField.DAILY_REMINDER_TIME.label
+                                } else {
+                                    "手动提醒时间"
+                                }
+                            )
+                        },
+                        placeholder = { Text("09:00") },
+                        singleLine = true
+                    )
+                }
+                if (fields.contains(TaskFormField.REMINDER_PREVIEW)) {
+                    Text(
+                        reminderPreview(parsedDeadline),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(title, module, deadline, difficulty) },
+                onClick = {
+                    onCreate(
+                        TaskFormInput(
+                            title = title,
+                            module = module,
+                            deadlineText = deadline,
+                            difficulty = difficulty,
+                            note = note,
+                            reminderEnabled = reminderEnabled,
+                            reminderTimeText = reminderTime,
+                            timeBucket = timeBucket,
+                            weeklyDaysText = weeklyDays,
+                            monthlyDayText = monthlyDay,
+                            projectStage = projectStage
+                        )
+                    )
+                },
                 enabled = title.isNotBlank()
             ) {
                 Text("创建")
@@ -562,6 +805,27 @@ private fun AddTaskDialog(
             }
         }
     )
+}
+
+private fun parseDeadlinePreview(text: String): LocalDateTime? {
+    val clean = text.trim()
+    if (clean.isEmpty()) return null
+    return runCatching {
+        when {
+            'T' in clean -> LocalDateTime.parse(clean)
+            ' ' in clean -> LocalDateTime.parse(clean.replace(' ', 'T'))
+            else -> LocalDate.parse(clean).atTime(23, 0)
+        }
+    }.getOrNull()
+}
+
+private fun reminderPreview(deadline: LocalDateTime?): String {
+    if (deadline == null) return "提醒预览：填写 DDL 后生成"
+    val reminders = ReminderPolicy.defaultReminderTimes(LocalDateTime.now(), deadline)
+    if (reminders.isEmpty()) return "提醒预览：临近 DDL 时提醒"
+    return "提醒预览：" + reminders
+        .take(3)
+        .joinToString(" / ") { it.format(deadlineFormatter) }
 }
 
 @Composable

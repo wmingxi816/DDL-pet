@@ -2,6 +2,8 @@ package com.ddlmouse.app
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.ddlmouse.app.data.DefaultDailySummaryRepository
 import com.ddlmouse.app.data.DefaultPetRepository
 import com.ddlmouse.app.data.DefaultTaskRepository
@@ -14,7 +16,7 @@ class AppContainer(context: Context) {
         context,
         AppDatabase::class.java,
         "ddl_mouse.db"
-    ).build()
+    ).addMigrations(MIGRATION_1_2).build()
 
     val settingsStore = SettingsStore(context)
     val petRepository = DefaultPetRepository(database.petDao())
@@ -26,5 +28,19 @@ class AppContainer(context: Context) {
         dailySummaryRepository = dailySummaryRepository,
         reminderScheduler = reminderScheduler
     )
-}
 
+    private companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN repeatMode TEXT NOT NULL DEFAULT 'NONE'")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN reminderEnabled INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN preferredReminderMinuteOfDay INTEGER")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN timeBucket TEXT")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN weeklyDays TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN monthlyDay INTEGER")
+                db.execSQL("ALTER TABLE task_templates ADD COLUMN projectStage TEXT")
+            }
+        }
+    }
+}

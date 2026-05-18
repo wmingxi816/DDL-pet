@@ -24,6 +24,31 @@ enum class TaskStatus {
     MISSED
 }
 
+enum class RepeatMode(val label: String) {
+    NONE("不循环"),
+    DAILY("每天"),
+    WEEKLY("每周"),
+    MONTHLY("每月")
+}
+
+enum class TaskFormField(val label: String) {
+    TITLE("任务名称"),
+    MODULE("任务类型"),
+    DIFFICULTY("难度"),
+    NOTE("备注"),
+    REMINDER_ENABLED("开启提醒"),
+    REMINDER_PREVIEW("提醒预览"),
+    DEADLINE_OPTIONAL("DDL，可选"),
+    DEADLINE_REQUIRED("DDL，建议填写"),
+    TIME_BUCKET("打卡时间段"),
+    DAILY_REMINDER_TIME("每日提醒时间"),
+    WEEKLY_DAYS("每周出现日期"),
+    WEEKLY_DEADLINE_TIME("本周截止时间"),
+    MONTHLY_DAY("每月出现日期"),
+    MONTHLY_DEADLINE_TIME("每月截止时间"),
+    PROJECT_STAGE("项目阶段")
+}
+
 data class TaskTemplate(
     val id: Long = 0,
     val title: String,
@@ -31,7 +56,15 @@ data class TaskTemplate(
     val deadline: LocalDateTime?,
     val difficulty: Difficulty,
     val enabled: Boolean = true,
-    val reminderOverride: LocalDateTime? = null
+    val reminderOverride: LocalDateTime? = null,
+    val note: String = "",
+    val repeatMode: RepeatMode = RepeatMode.NONE,
+    val reminderEnabled: Boolean = true,
+    val preferredReminderMinuteOfDay: Int? = null,
+    val timeBucket: String? = null,
+    val weeklyDays: Set<Int> = emptySet(),
+    val monthlyDay: Int? = null,
+    val projectStage: String? = null
 )
 
 data class TaskOccurrence(
@@ -94,3 +127,11 @@ data class DailySummary(
     val shownAt: LocalDateTime? = null
 )
 
+data class TaskSectionSummary(
+    val module: TaskModule,
+    val totalCount: Int,
+    val completedCount: Int,
+    val pendingCount: Int,
+    val missedCount: Int,
+    val pendingPoints: Int
+)

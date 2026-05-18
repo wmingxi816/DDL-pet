@@ -10,14 +10,19 @@ import com.ddlmouse.app.domain.DifficultyPolicy
 import com.ddlmouse.app.domain.PetLineScene
 import com.ddlmouse.app.domain.PetState
 import com.ddlmouse.app.domain.StoreItem
+import com.ddlmouse.app.domain.TaskFormPolicy
 import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
+import com.ddlmouse.app.domain.TaskSectionPolicy
+import com.ddlmouse.app.domain.TaskSectionSummary
 import com.ddlmouse.app.domain.TaskStatus
 import com.ddlmouse.app.data.DailySummaryRepository
 import com.ddlmouse.app.data.PetRepository
 import com.ddlmouse.app.data.TaskRepository
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -43,12 +48,40 @@ data class DdlMouseUiState(
     val filteredOccurrences: List<TaskOccurrence>
         get() = occurrences.filter { it.module == selectedModule }
 
+    val sectionSummaries: List<TaskSectionSummary>
+        get() = TaskSectionPolicy.summaries(occurrences)
+
+    val todayTotal: Int
+        get() = occurrences.count { it.module == TaskModule.DAILY }
+
+    val todayCompleted: Int
+        get() = occurrences.count { it.module == TaskModule.DAILY && it.status == TaskStatus.COMPLETED }
+
+    val pendingPoints: Int
+        get() = occurrences
+            .filter { it.status == TaskStatus.PENDING }
+            .sumOf { it.difficulty.points }
+
     val urgentOccurrences: List<TaskOccurrence>
         get() = occurrences
             .filter { it.status == TaskStatus.PENDING && it.deadline != null }
             .sortedBy { it.deadline }
             .take(3)
 }
+
+data class TaskFormInput(
+    val title: String,
+    val module: TaskModule,
+    val deadlineText: String,
+    val difficulty: Difficulty?,
+    val note: String,
+    val reminderEnabled: Boolean,
+    val reminderTimeText: String,
+    val timeBucket: String,
+    val weeklyDaysText: String,
+    val monthlyDayText: String,
+    val projectStage: String
+)
 
 class DdlMouseViewModel(
     private val taskRepository: TaskRepository,
@@ -106,16 +139,26 @@ class DdlMouseViewModel(
         _state.update { it.copy(showAddTaskDialog = false) }
     }
 
-    fun createTask(title: String, module: TaskModule, deadlineText: String, difficulty: Difficulty?) {
+    fun createTask(input: TaskFormInput) {
         viewModelScope.launch {
             val now = LocalDateTime.now()
-            val deadline = parseDeadline(deadlineText)
+            val deadline = parseDeadline(input.deadlineText)
+            val reminderMinute = parseMinuteOfDay(input.reminderTimeText)
+            val reminderOverride = deadline?.let { reminderOverrideFor(it, reminderMinute) }
             taskRepository.createTask(
-                title = title,
-                module = module,
+                title = input.title,
+                module = input.module,
                 deadline = deadline,
-                difficulty = difficulty ?: DifficultyPolicy.recommend(module, deadline, now),
-                reminderOverride = null
+                difficulty = input.difficulty ?: DifficultyPolicy.recommend(input.module, deadline, now),
+                reminderOverride = reminderOverride,
+                note = input.note,
+                repeatMode = TaskFormPolicy.repeatModeFor(input.module),
+                reminderEnabled = input.reminderEnabled,
+                preferredReminderMinuteOfDay = reminderMinute,
+                timeBucket = input.timeBucket,
+                weeklyDays = parseWeeklyDays(input.weeklyDaysText),
+                monthlyDay = parseMonthlyDay(input.monthlyDayText),
+                projectStage = input.projectStage
             )
             _state.update {
                 it.copy(
@@ -168,12 +211,55 @@ class DdlMouseViewModel(
         val clean = text.trim()
         if (clean.isEmpty()) return null
         return runCatching {
-            if ('T' in clean) {
-                LocalDateTime.parse(clean)
-            } else {
-                LocalDate.parse(clean).atTime(23, 0)
+            when {
+                'T' in clean -> LocalDateTime.parse(clean)
+                ' ' in clean -> LocalDateTime.parse(clean.replace(' ', 'T'))
+                else -> LocalDate.parse(clean).atTime(23, 0)
             }
         }.getOrNull()
+    }
+
+    private fun parseMinuteOfDay(text: String): Int? {
+        val clean = text.trim()
+        if (clean.isEmpty()) return null
+        return runCatching {
+            val time = LocalTime.parse(clean, DateTimeFormatter.ofPattern("H:mm"))
+            time.hour * 60 + time.minute
+        }.getOrNull()
+    }
+
+    private fun reminderOverrideFor(deadline: LocalDateTime, minuteOfDay: Int?): LocalDateTime? {
+        if (minuteOfDay == null) return null
+        val candidate = deadline.toLocalDate().atTime(minuteOfDay / 60, minuteOfDay % 60)
+        return if (candidate.isBefore(deadline)) candidate else deadline.minusHours(1)
+    }
+
+    private fun parseWeeklyDays(text: String): Set<Int> {
+        if (text.isBlank()) return emptySet()
+        val normalized = text
+            .replace("周", "")
+            .replace("星期", "")
+            .replace("礼拜", "")
+            .replace("日", "7")
+            .replace("天", "7")
+        val chineseDayMap = mapOf(
+            '一' to 1,
+            '二' to 2,
+            '三' to 3,
+            '四' to 4,
+            '五' to 5,
+            '六' to 6,
+            '七' to 7
+        )
+        val directDays = normalized.mapNotNull { chineseDayMap[it] }
+        val tokenDays = normalized
+            .split(',', '，', '、', ' ')
+            .mapNotNull { it.trim().toIntOrNull() }
+        return (directDays + tokenDays).filter { it in 1..7 }.toSet()
+    }
+
+    private fun parseMonthlyDay(text: String): Int? {
+        return text.trim().toIntOrNull()?.takeIf { it in 1..31 }
     }
 
     class Factory(
@@ -193,4 +279,3 @@ class DdlMouseViewModel(
         }
     }
 }
-
