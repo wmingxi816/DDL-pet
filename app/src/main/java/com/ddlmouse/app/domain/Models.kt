@@ -135,3 +135,19 @@ data class TaskSectionSummary(
     val missedCount: Int,
     val pendingPoints: Int
 )
+
+data class TaskEditDraft(
+    val title: String,
+    val module: TaskModule,
+    val deadline: LocalDateTime?,
+    val difficulty: Difficulty,
+    val reminderOverride: LocalDateTime? = null,
+    val note: String = "",
+    val repeatMode: RepeatMode = RepeatMode.NONE,
+    val reminderEnabled: Boolean = true,
+    val preferredReminderMinuteOfDay: Int? = null,
+    val timeBucket: String? = null,
+    val weeklyDays: Set<Int> = emptySet(),
+    val monthlyDay: Int? = null,
+    val projectStage: String? = null
+)

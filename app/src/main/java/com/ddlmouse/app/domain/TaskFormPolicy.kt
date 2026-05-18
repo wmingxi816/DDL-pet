@@ -63,3 +63,22 @@ object TaskSectionPolicy {
     }
 }
 
+object TaskEditPolicy {
+    fun apply(original: TaskTemplate, draft: TaskEditDraft): TaskTemplate {
+        return original.copy(
+            title = draft.title.trim(),
+            module = draft.module,
+            deadline = draft.deadline,
+            difficulty = draft.difficulty,
+            reminderOverride = draft.reminderOverride,
+            note = draft.note.trim(),
+            repeatMode = draft.repeatMode,
+            reminderEnabled = draft.reminderEnabled,
+            preferredReminderMinuteOfDay = draft.preferredReminderMinuteOfDay,
+            timeBucket = draft.timeBucket?.trim()?.takeIf { it.isNotEmpty() },
+            weeklyDays = draft.weeklyDays.filter { it in 1..7 }.toSet(),
+            monthlyDay = draft.monthlyDay?.takeIf { it in 1..31 },
+            projectStage = draft.projectStage?.trim()?.takeIf { it.isNotEmpty() }
+        )
+    }
+}

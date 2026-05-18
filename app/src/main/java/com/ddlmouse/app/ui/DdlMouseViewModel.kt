@@ -16,6 +16,7 @@ import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskSectionPolicy
 import com.ddlmouse.app.domain.TaskSectionSummary
 import com.ddlmouse.app.domain.TaskStatus
+import com.ddlmouse.app.domain.TaskTemplate
 import com.ddlmouse.app.data.DailySummaryRepository
 import com.ddlmouse.app.data.PetRepository
 import com.ddlmouse.app.data.TaskRepository
@@ -37,12 +38,14 @@ enum class MainTab(val label: String) {
 data class DdlMouseUiState(
     val selectedTab: MainTab = MainTab.TASKS,
     val selectedModule: TaskModule = TaskModule.DAILY,
+    val templates: List<TaskTemplate> = emptyList(),
     val occurrences: List<TaskOccurrence> = emptyList(),
     val petState: PetState = PetState(),
     val storeItems: List<StoreItem> = emptyList(),
     val unshownSummary: DailySummary? = null,
     val petLine: String = "鼠鼠在线，DDL 也在线。",
     val showAddTaskDialog: Boolean = false,
+    val editingTemplateId: Long? = null,
     val notificationsEnabled: Boolean = true
 ) {
     val filteredOccurrences: List<TaskOccurrence>
@@ -67,6 +70,9 @@ data class DdlMouseUiState(
             .filter { it.status == TaskStatus.PENDING && it.deadline != null }
             .sortedBy { it.deadline }
             .take(3)
+
+    val editingTemplate: TaskTemplate?
+        get() = editingTemplateId?.let { id -> templates.firstOrNull { it.id == id } }
 }
 
 data class TaskFormInput(
@@ -99,6 +105,11 @@ class DdlMouseViewModel(
         viewModelScope.launch {
             taskRepository.observeOccurrences().collect { occurrences ->
                 _state.update { it.copy(occurrences = occurrences) }
+            }
+        }
+        viewModelScope.launch {
+            taskRepository.observeTemplates().collect { templates ->
+                _state.update { it.copy(templates = templates) }
             }
         }
         viewModelScope.launch {
@@ -139,6 +150,14 @@ class DdlMouseViewModel(
         _state.update { it.copy(showAddTaskDialog = false) }
     }
 
+    fun showEditTaskDialog(templateId: Long) {
+        _state.update { it.copy(editingTemplateId = templateId) }
+    }
+
+    fun hideEditTaskDialog() {
+        _state.update { it.copy(editingTemplateId = null) }
+    }
+
     fun createTask(input: TaskFormInput) {
         viewModelScope.launch {
             val now = LocalDateTime.now()
@@ -163,6 +182,39 @@ class DdlMouseViewModel(
             _state.update {
                 it.copy(
                     showAddTaskDialog = false,
+                    petLine = petRepository.randomLine(PetLineScene.REMINDER)
+                )
+            }
+        }
+    }
+
+    fun updateTask(input: TaskFormInput) {
+        val templateId = state.value.editingTemplateId ?: return
+        viewModelScope.launch {
+            val now = LocalDateTime.now()
+            val deadline = parseDeadline(input.deadlineText)
+            val reminderMinute = parseMinuteOfDay(input.reminderTimeText)
+            val reminderOverride = deadline?.let { reminderOverrideFor(it, reminderMinute) }
+            taskRepository.updateTask(
+                templateId = templateId,
+                title = input.title,
+                module = input.module,
+                deadline = deadline,
+                difficulty = input.difficulty ?: DifficultyPolicy.recommend(input.module, deadline, now),
+                reminderOverride = reminderOverride,
+                note = input.note,
+                repeatMode = TaskFormPolicy.repeatModeFor(input.module),
+                reminderEnabled = input.reminderEnabled,
+                preferredReminderMinuteOfDay = reminderMinute,
+                timeBucket = input.timeBucket,
+                weeklyDays = parseWeeklyDays(input.weeklyDaysText),
+                monthlyDay = parseMonthlyDay(input.monthlyDayText),
+                projectStage = input.projectStage
+            )
+            _state.update {
+                it.copy(
+                    editingTemplateId = null,
+                    selectedModule = input.module,
                     petLine = petRepository.randomLine(PetLineScene.REMINDER)
                 )
             }

@@ -19,10 +19,12 @@ import com.ddlmouse.app.domain.StoreCategory
 import com.ddlmouse.app.domain.StoreItem
 import com.ddlmouse.app.domain.SummaryBuilder
 import com.ddlmouse.app.domain.TaskModule
+import com.ddlmouse.app.domain.TaskEditDraft
+import com.ddlmouse.app.domain.TaskEditPolicy
+import com.ddlmouse.app.domain.TaskFormPolicy
 import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskStatus
 import com.ddlmouse.app.domain.TaskTemplate
-import com.ddlmouse.app.domain.TaskFormPolicy
 import com.ddlmouse.app.reminder.ReminderScheduler
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -34,6 +36,22 @@ interface TaskRepository {
     fun observeTemplates(): Flow<List<TaskTemplate>>
     suspend fun initializeForOpen(now: LocalDateTime)
     suspend fun createTask(
+        title: String,
+        module: TaskModule,
+        deadline: LocalDateTime?,
+        difficulty: Difficulty?,
+        reminderOverride: LocalDateTime?,
+        note: String = "",
+        repeatMode: RepeatMode = TaskFormPolicy.repeatModeFor(module),
+        reminderEnabled: Boolean = true,
+        preferredReminderMinuteOfDay: Int? = null,
+        timeBucket: String? = null,
+        weeklyDays: Set<Int> = emptySet(),
+        monthlyDay: Int? = null,
+        projectStage: String? = null
+    )
+    suspend fun updateTask(
+        templateId: Long,
         title: String,
         module: TaskModule,
         deadline: LocalDateTime?,
@@ -132,6 +150,48 @@ class DefaultTaskRepository(
         rebuildReminders(templateId)
     }
 
+    override suspend fun updateTask(
+        templateId: Long,
+        title: String,
+        module: TaskModule,
+        deadline: LocalDateTime?,
+        difficulty: Difficulty?,
+        reminderOverride: LocalDateTime?,
+        note: String,
+        repeatMode: RepeatMode,
+        reminderEnabled: Boolean,
+        preferredReminderMinuteOfDay: Int?,
+        timeBucket: String?,
+        weeklyDays: Set<Int>,
+        monthlyDay: Int?,
+        projectStage: String?
+    ) {
+        if (title.isBlank()) return
+        val existing = taskDao.templateById(templateId)?.toDomain() ?: return
+        val finalDifficulty = difficulty ?: DifficultyPolicy.recommend(module, deadline, LocalDateTime.now())
+        val updated = TaskEditPolicy.apply(
+            original = existing,
+            draft = TaskEditDraft(
+                title = title,
+                module = module,
+                deadline = deadline,
+                difficulty = finalDifficulty,
+                reminderOverride = reminderOverride,
+                note = note,
+                repeatMode = repeatMode,
+                reminderEnabled = reminderEnabled,
+                preferredReminderMinuteOfDay = preferredReminderMinuteOfDay,
+                timeBucket = timeBucket,
+                weeklyDays = weeklyDays,
+                monthlyDay = monthlyDay,
+                projectStage = projectStage
+            )
+        )
+        taskDao.updateTemplate(updated.toEntity())
+        updatePendingOccurrences(updated)
+        rebuildReminders(templateId)
+    }
+
     override suspend fun completeOccurrence(occurrenceId: Long, completedAt: LocalDateTime) {
         val occurrence = taskDao.occurrenceById(occurrenceId)?.toDomain() ?: return
         if (occurrence.status != TaskStatus.PENDING) return
@@ -170,6 +230,21 @@ class DefaultTaskRepository(
                 difficulty = template.difficulty
             ).toEntity()
         )
+    }
+
+    private suspend fun updatePendingOccurrences(template: TaskTemplate) {
+        taskDao.pendingOccurrencesForTemplate(template.id)
+            .map { it.toDomain() }
+            .forEach { occurrence ->
+                taskDao.updateOccurrence(
+                    occurrence.copy(
+                        title = template.title,
+                        module = template.module,
+                        deadline = template.deadline,
+                        difficulty = template.difficulty
+                    ).toEntity()
+                )
+            }
     }
 
     private suspend fun settleMissedTasks(now: LocalDateTime) {

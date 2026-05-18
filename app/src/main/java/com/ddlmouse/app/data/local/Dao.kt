@@ -39,6 +39,9 @@ interface TaskDao {
     @Query("SELECT * FROM task_occurrences WHERE id = :id LIMIT 1")
     suspend fun occurrenceById(id: Long): TaskOccurrenceEntity?
 
+    @Query("SELECT * FROM task_occurrences WHERE templateId = :templateId AND status = 'PENDING'")
+    suspend fun pendingOccurrencesForTemplate(templateId: Long): List<TaskOccurrenceEntity>
+
     @Insert
     suspend fun insertOccurrence(entity: TaskOccurrenceEntity): Long
 
@@ -96,4 +99,3 @@ interface DailySummaryDao {
     @Query("UPDATE daily_summaries SET shownAt = :shownAt WHERE businessDate = :businessDate")
     suspend fun markShown(businessDate: String, shownAt: Long)
 }
-

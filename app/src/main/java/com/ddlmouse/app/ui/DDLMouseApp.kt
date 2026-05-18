@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Pets
@@ -74,6 +75,7 @@ import com.ddlmouse.app.domain.TaskModule
 import com.ddlmouse.app.domain.TaskOccurrence
 import com.ddlmouse.app.domain.TaskSectionSummary
 import com.ddlmouse.app.domain.TaskStatus
+import com.ddlmouse.app.domain.TaskTemplate
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -114,6 +116,7 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
             when (state.selectedTab) {
                 MainTab.TASKS -> TaskScreen(
                     state = state,
+                    onEdit = viewModel::showEditTaskDialog,
                     onComplete = viewModel::completeOccurrence
                 )
                 MainTab.PET -> PetScreen(
@@ -135,6 +138,13 @@ fun DDLMouseApp(viewModel: DdlMouseViewModel) {
             initialModule = state.selectedModule,
             onDismiss = viewModel::hideAddTaskDialog,
             onCreate = viewModel::createTask
+        )
+    }
+    state.editingTemplate?.let { template ->
+        EditTaskDialog(
+            template = template,
+            onDismiss = viewModel::hideEditTaskDialog,
+            onSave = viewModel::updateTask
         )
     }
 }
@@ -162,6 +172,7 @@ private fun MainTab.icon(): ImageVector = when (this) {
 @Composable
 private fun TaskScreen(
     state: DdlMouseUiState,
+    onEdit: (Long) -> Unit,
     onComplete: (Long) -> Unit
 ) {
     LazyColumn(
@@ -184,6 +195,7 @@ private fun TaskScreen(
             TaskModuleSection(
                 summary = summary,
                 occurrences = state.occurrences.filter { it.module == summary.module },
+                onEdit = onEdit,
                 onComplete = onComplete
             )
         }
@@ -290,6 +302,7 @@ private fun ModuleChips(selected: TaskModule, onSelected: (TaskModule) -> Unit) 
 private fun TaskModuleSection(
     summary: TaskSectionSummary,
     occurrences: List<TaskOccurrence>,
+    onEdit: (Long) -> Unit,
     onComplete: (Long) -> Unit
 ) {
     Surface(
@@ -341,6 +354,7 @@ private fun TaskModuleSection(
                     }
                     TaskListRow(
                         occurrence = occurrence,
+                        onEdit = { onEdit(occurrence.templateId) },
                         onComplete = { onComplete(occurrence.id) }
                     )
                 }
@@ -350,7 +364,7 @@ private fun TaskModuleSection(
 }
 
 @Composable
-private fun TaskListRow(occurrence: TaskOccurrence, onComplete: () -> Unit) {
+private fun TaskListRow(occurrence: TaskOccurrence, onEdit: () -> Unit, onComplete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -386,9 +400,14 @@ private fun TaskListRow(occurrence: TaskOccurrence, onComplete: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        if (occurrence.status == TaskStatus.PENDING) {
-            IconButton(onClick = onComplete) {
-                Icon(Icons.Default.Check, contentDescription = "完成")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Default.Edit, contentDescription = "编辑")
+            }
+            if (occurrence.status == TaskStatus.PENDING) {
+                IconButton(onClick = onComplete) {
+                    Icon(Icons.Default.Check, contentDescription = "完成")
+                }
             }
         }
     }
@@ -625,24 +644,66 @@ private fun AddTaskDialog(
     onDismiss: () -> Unit,
     onCreate: (TaskFormInput) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var module by remember { mutableStateOf(initialModule) }
-    var deadline by remember { mutableStateOf("") }
-    var difficulty by remember { mutableStateOf<Difficulty?>(null) }
-    var note by remember { mutableStateOf("") }
-    var reminderEnabled by remember { mutableStateOf(true) }
-    var reminderTime by remember { mutableStateOf("") }
-    var timeBucket by remember { mutableStateOf("") }
-    var weeklyDays by remember { mutableStateOf("") }
-    var monthlyDay by remember { mutableStateOf("") }
-    var projectStage by remember { mutableStateOf("") }
+    TaskFormDialog(
+        dialogTitle = "新增任务",
+        confirmText = "创建",
+        initialModule = initialModule,
+        initialTemplate = null,
+        onDismiss = onDismiss,
+        onSubmit = onCreate
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditTaskDialog(
+    template: TaskTemplate,
+    onDismiss: () -> Unit,
+    onSave: (TaskFormInput) -> Unit
+) {
+    TaskFormDialog(
+        dialogTitle = "编辑任务",
+        confirmText = "保存",
+        initialModule = template.module,
+        initialTemplate = template,
+        onDismiss = onDismiss,
+        onSubmit = onSave
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskFormDialog(
+    dialogTitle: String,
+    confirmText: String,
+    initialModule: TaskModule,
+    initialTemplate: TaskTemplate?,
+    onDismiss: () -> Unit,
+    onSubmit: (TaskFormInput) -> Unit
+) {
+    val formKey = initialTemplate?.id ?: initialModule.name
+    var title by remember(formKey) { mutableStateOf(initialTemplate?.title.orEmpty()) }
+    var module by remember(formKey) { mutableStateOf(initialTemplate?.module ?: initialModule) }
+    var deadline by remember(formKey) { mutableStateOf(formatDeadlineInput(initialTemplate?.deadline)) }
+    var difficulty by remember(formKey) { mutableStateOf(initialTemplate?.difficulty) }
+    var note by remember(formKey) { mutableStateOf(initialTemplate?.note.orEmpty()) }
+    var reminderEnabled by remember(formKey) { mutableStateOf(initialTemplate?.reminderEnabled ?: true) }
+    var reminderTime by remember(formKey) {
+        mutableStateOf(formatMinuteOfDay(initialTemplate?.preferredReminderMinuteOfDay))
+    }
+    var timeBucket by remember(formKey) { mutableStateOf(initialTemplate?.timeBucket.orEmpty()) }
+    var weeklyDays by remember(formKey) {
+        mutableStateOf(initialTemplate?.weeklyDays?.sorted()?.joinToString(",").orEmpty())
+    }
+    var monthlyDay by remember(formKey) { mutableStateOf(initialTemplate?.monthlyDay?.toString().orEmpty()) }
+    var projectStage by remember(formKey) { mutableStateOf(initialTemplate?.projectStage.orEmpty()) }
     val fields = TaskFormPolicy.fieldsFor(module)
     val parsedDeadline = parseDeadlinePreview(deadline)
     val recommendedDifficulty = DifficultyPolicy.recommend(module, parsedDeadline, LocalDateTime.now())
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新增任务") },
+        title = { Text(dialogTitle) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -778,7 +839,7 @@ private fun AddTaskDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onCreate(
+                    onSubmit(
                         TaskFormInput(
                             title = title,
                             module = module,
@@ -796,7 +857,7 @@ private fun AddTaskDialog(
                 },
                 enabled = title.isNotBlank()
             ) {
-                Text("创建")
+                Text(confirmText)
             }
         },
         dismissButton = {
@@ -805,6 +866,17 @@ private fun AddTaskDialog(
             }
         }
     )
+}
+
+private val formInputFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+
+private fun formatDeadlineInput(value: LocalDateTime?): String {
+    return value?.format(formInputFormatter).orEmpty()
+}
+
+private fun formatMinuteOfDay(value: Int?): String {
+    if (value == null) return ""
+    return "%02d:%02d".format(value / 60, value % 60)
 }
 
 private fun parseDeadlinePreview(text: String): LocalDateTime? {
